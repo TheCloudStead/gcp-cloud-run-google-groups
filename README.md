@@ -1,76 +1,102 @@
-# Finding EOL CloudSQL Instances in Your GCP Org
+# Scraping Google Workspace Groups with a Cloud Run Job
 
 ### Introduction
 
-This repository contains the code to identify end-of-life (EOL) CloudSQL instances within your GCP organization. It aims to assist security practitioners and developers by identifying outdated versions that need upgrading before extended support runs out. More details on how to use this repository can be found in the article:
-
-[**Finding EOL CloudSQL Instances in Your GCP Org**](https://thecloudstead.medium.com/finding-eol-cloudsql-instances-in-your-gcp-org)
+This repository contains code and infrastructure as code to retrieve Google Workspace groups and their members, then store this information in Firestore. The solution leverages a Cloud Run Job scheduled via Cloud Scheduler to perform daily scrapes of group memberships across a Google Cloud Organization. This automated approach aids administrators in auditing and managing group access effectively.
 
 ### Prerequisites
 
-- Google Cloud Platform account with permissions to access Cloud SQL instances.
-- APIs that must be enabled in your project:
-  - Cloud SQL Admin API
+- Google Cloud Platform account with necessary permissions.
+- Google Workspace administrator access to configure domain-wide delegation.
+- APIs enabled in your project:
+  - Admin SDK Directory API
   - Google Cloud Firestore API
-  - Cloud Resource Manager API
+  - Secret Manager API
+  - Cloud Run API
+  - Cloud Scheduler API
 - Python installed on your local machine.
-- `gcloud` CLI configured to interact with your GCP account.
+- `gcloud` CLI configured for your GCP account.
+- OpenTofu installed (for deploying infrastructure).
 
 ### Getting Started
 
-Clone the repository and move into the appropriate directory:
+Clone the repository and navigate to the project directory:
 
 ```bash
-git clone https://github.com/TheCloudStead/eol-cloudsql-checker
-cd eol-cloudsql-checker/src/
+git clone https://github.com/TheCloudStead/gcp-cloud-run-google-groups.git
+cd gcp-cloud-run-google-groups/build
 ```
 
 ### Setting Up Environment
 
-To run this script, install the dependencies listed in `requirements.txt`:
+1. **Python Dependencies:**  
+   Install the required Python packages:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Google Cloud Authentication:**  
+   Ensure you are authenticated to your GCP account:
+
+   ```bash
+   gcloud config set project <project_id>
+   gcloud config set account <email>
+   gcloud auth login
+   gcloud auth application-default login
+   ```
+
+3. **Configure Domain-wide Delegation:**  
+   Follow the instructions in this repository or accompanying article to set up a service account with domain-wide delegation in Google Workspace. This step is essential for the service account to impersonate an admin and access group data.
+
+### Building and Deploying the Application
+
+#### Dockerize the Python Application
+
+Build the Docker image and push it to Google Container Registry (GCR):
 
 ```bash
-pip install -r requirements.txt
+docker build -t gcr.io/<project_id>/get-google-groups:1.0 .
+docker push gcr.io/<project_id>/get-google-groups:1.0
 ```
 
-### Running the Script
+#### Deploy Infrastructure with OpenTofu
 
-Make sure you are authenticated to your GCP account before running the script. You can use the following commands to re-authenticate if necessary:
+1. Update variables in your OpenTofu configuration files as necessary (project ID, region, etc.).
+2. Initialize and apply the configuration to set up Firestore, service accounts, Cloud Run Job, Cloud Scheduler, and other resources:
 
-```bash
-gcloud config set project <project_id>
-gcloud config set account <email>
-gcloud auth login
-gcloud auth application-default login
-```
+   ```bash
+   cd ../opentofu
+   tofu init
+   tofu apply
+   ```
 
-After authenticating, run the script to identify EOL CloudSQL instances:
+### How It Works
 
-```bash
-python main.py
-```
+1. **Service Account & Domain-Wide Delegation:**  
+   The service account, configured with domain-wide delegation, impersonates a Workspace admin to read group memberships.
 
-### Files Overview
+2. **Python Script (main.py):**  
+   - Fetches a service account key from Secret Manager.
+   - Uses the Google Admin SDK Directory API to iterate through Workspace groups.
+   - Retrieves group members and their roles.
+   - Stores group membership data in Firestore for future reference.
 
-- **main.py**: The core Python script for fetching EOL CloudSQL instance information from your GCP organization.
-- **requirements.txt**: Lists Python dependencies needed for the script (e.g., google-cloud-firestore, google-api-python-client, rich).
-- **firestore_setup.py**: Script to set up Firestore collections if they don't already exist.
+3. **Cloud Run Job and Scheduler:**  
+   - The containerized Python application runs as a Cloud Run Job.
+   - Cloud Scheduler triggers the job once a day based on the specified cron schedule.
+   - The job updates Firestore with the latest group membership information, preserving historical data for deleted groups.
 
-### How the Script Works
+### Updating and Maintaining
 
-1. The script queries a Firestore collection in a specific GCP project to get the current list of GCP projects.
-2. It then loops through these projects, lists any SQL instances, and checks if their versions are end-of-life based on the defined `eol_versions`.
-3. Results are displayed in a stylized table with version counts using the **Rich** library.
+- **Adjusting Schedule:**  
+  Modify the Cloud Scheduler configuration in the OpenTofu files to change how frequently the job runs.
 
-### Updating the Project List
+- **Updating Environment Variables:**  
+  If you need to modify environment variables (like domain or collection names), update them in the OpenTofu configuration for the Cloud Run Job resource.
 
-To update the list of GCP projects that this script checks, modify the `FIRESTORE_COLLECTION` and `FIRESTORE_DOCUMENT` variables in `main.py`. You may also need to add new projects to the Firestore collection if necessary.
-
-### Tips
-
-- Ensure you have the correct permissions for accessing Cloud SQL instances and Firestore collections.
-- Regularly update your Firestore project list to ensure new projects are scanned for EOL instances.
-- If you need a more detailed output (e.g., instance size or specific configurations), consider modifying the script or using Jupyter Notebook for a more interactive experience.
+- **Managing Secrets:**  
+  The service account key is stored in Secret Manager and referenced in the Python application. To rotate keys or update secrets, follow standard procedures in GCP and update the Secret Manager accordingly.
 
 ### License
 
@@ -79,4 +105,3 @@ This project is licensed under the MIT License. See the `LICENSE` file for more 
 ### Acknowledgments
 
 Thank you to the readers of my Medium articles!
-
